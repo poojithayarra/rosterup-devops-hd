@@ -6,6 +6,8 @@ const {
     buildListPendingClaimsController,
     buildProcessShiftClaimController,
     buildClaimShiftController,
+    buildPostShiftsController,
+    buildWithdrawShiftsController,
 } = require('../controllers/shifts.controller');
 
 function createResponse() {
@@ -268,4 +270,169 @@ test('processShiftClaim does not expose unexpected errors', async () => {
     assert.deepEqual(res.body, {
         error: 'Unable to process shift claim',
     });
+});
+
+test('postShiftsController lets an authenticated employee post a shift', async () => {
+    const shiftBody = { shift_date: '2026-09-20', start_time: '09:00', end_time: '17:00', shift_role: 'Barista' };
+    const postedShift = { _id: 'shift-new', ...shiftBody, status: 'open' };
+    const controller = buildPostShiftsController({
+        postShiftsService: async (body, employeeId) => {
+            assert.deepEqual(body, shiftBody);
+            assert.equal(employeeId, 'employee-1');
+            return postedShift;
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        body: shiftBody,
+    }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, postedShift);
+});
+
+test('postShiftsController rejects a request without an authenticated user', async () => {
+    const controller = buildPostShiftsController({
+        postShiftsService: async () => {
+            throw new Error('Service should not run');
+        },
+    });
+    const res = createResponse();
+
+    await controller({ body: {} }, res);
+
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { message: 'Authentication required.' });
+});
+
+test('postShiftsController surfaces a service error with its own status code', async () => {
+    const controller = buildPostShiftsController({
+        postShiftsService: async () => {
+            const error = new Error('You must belong to an active workplace to post a shift.');
+            error.statusCode = 400;
+            throw error;
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        body: {},
+    }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.body, {
+        message: 'You must belong to an active workplace to post a shift.',
+    });
+});
+
+test('postShiftsController returns a friendly message on a schema validation error', async () => {
+    const controller = buildPostShiftsController({
+        postShiftsService: async () => {
+            const error = new Error('Shift validation failed');
+            error.name = 'ValidationError';
+            error.errors = { shift_date: {}, start_time: {} };
+            throw error;
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        body: {},
+    }, res);
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, {
+        message: 'Data inputted incorrectly. Please check the shift_date, start_time fields and ensure they are inputted correctly.',
+    });
+});
+
+test('withdrawShiftsController withdraws a pending claim for an authenticated employee', async () => {
+    const withdrawnShift = { _id: 'shift-1', status: 'open', claimed_by: null };
+    const controller = buildWithdrawShiftsController({
+        withdrawShiftsService: async (shiftId, employeeId) => {
+            assert.equal(shiftId, 'shift-1');
+            assert.equal(employeeId, 'employee-1');
+            return withdrawnShift;
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        query: { shiftId: 'shift-1' },
+    }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, withdrawnShift);
+});
+
+test('withdrawShiftsController rejects a request without an authenticated user', async () => {
+    const controller = buildWithdrawShiftsController({
+        withdrawShiftsService: async () => {
+            throw new Error('Service should not run');
+        },
+    });
+    const res = createResponse();
+
+    await controller({ query: { shiftId: 'shift-1' } }, res);
+
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { message: 'Authentication required.' });
+});
+
+test('withdrawShiftsController requires a shiftId', async () => {
+    const controller = buildWithdrawShiftsController({
+        withdrawShiftsService: async () => {
+            throw new Error('Service should not run');
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        query: {},
+    }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.body, { message: 'shiftId is required' });
+});
+
+test('withdrawShiftsController returns 404 when the shift is not a pending claim of the caller', async () => {
+    const controller = buildWithdrawShiftsController({
+        withdrawShiftsService: async () => null,
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        query: { shiftId: 'shift-1' },
+    }, res);
+
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, {
+        message: 'Shift not found, or it is not a pending claim of yours',
+    });
+});
+
+test('withdrawShiftsController surfaces a service error with its own status code', async () => {
+    const controller = buildWithdrawShiftsController({
+        withdrawShiftsService: async () => {
+            const error = new Error('Something went wrong.');
+            error.statusCode = 400;
+            throw error;
+        },
+    });
+    const res = createResponse();
+
+    await controller({
+        user: { id: 'employee-1', role: 'employee' },
+        query: { shiftId: 'shift-1' },
+    }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.body, { message: 'Something went wrong.' });
 });
