@@ -36,7 +36,38 @@ async function getWorkplaceEmployeesService(managerId, dependencies = {}) {
         .lean();
 }
 
+// Employees awaiting approval into the manager's own workplace. Scoped the
+// same way getWorkplaceEmployeesService is scoped, so one manager can't see
+// another manager's pending requests just by hitting the endpoint.
+async function getPendingEmployeesService(managerId, dependencies = {}) {
+    if (!managerId) {
+        const error = new Error('An authenticated manager is required');
+        error.statusCode = 401;
+        throw error;
+    }
+
+    const UserModel = dependencies.UserModel || userModel;
+    const WorkplaceModel = dependencies.WorkplaceModel || workplaceModel;
+
+    const workplace = await WorkplaceModel.findOne({
+        manager_id: managerId,
+        active: true,
+    });
+
+    if (!workplace) {
+        return [];
+    }
+
+    return UserModel.find({
+        role: 'employee',
+        workplace_status: 'pending',
+        workplace: workplace._id,
+        active: true,
+    }).select('first_name last_name email role workplace_status');
+}
+
 module.exports = {
     getUsersService,
     getWorkplaceEmployeesService,
+    getPendingEmployeesService,
 };
