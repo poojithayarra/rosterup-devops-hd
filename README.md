@@ -156,6 +156,111 @@ The server is organised into routes, controllers, services, and Mongoose
 models. Authentication, users, workplaces, shifts, and approvals should remain
 separate modules so team members can work without unnecessary overlap.
 
+## API Reference
+
+All routes are prefixed with `/api`. Endpoints marked 🔒 require an
+`Authorization: Bearer <token>` header (obtained from `/api/auth/login`);
+those marked 🔒 Manager also require the signed-in user's role to be
+`manager`.
+
+### Authentication (`/api/auth`)
+
+**POST /register** — creates a manager or employee account. Employees must supply a valid workplace invite code.
+```json
+// Request
+{ "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "password": "...", "role": "employee", "workplaceInviteCode": "ABC123" }
+```
+```json
+// Response (201)
+{ "success": true, "message": "Registration successful.",
+  "user": { "id": "...", "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "role": "employee", "workplace_status": "pending" } }
+```
+
+**POST /login**
+```json
+// Response (200)
+{ "success": true, "message": "Login successful.", "token": "<jwt>",
+  "user": { "id": "...", "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "role": "employee", "workplace_status": "approved" } }
+```
+
+**POST /logout** — stateless; the client just discards its token. Returns `{ "success": true, "message": "Logged out successfully." }`.
+
+**GET /me** 🔒 — returns the caller's current profile (same `user` shape as login). Used by dashboards to pick up changes like a manager's approval without needing to log back in.
+
+### Workplaces (`/api/workplaces`)
+
+**POST /** 🔒 Manager — creates a workplace and generates its invite code.
+```json
+// Request
+{ "workplace_name": "Corner Cafe", "workplace_type": "Cafe", "workplace_address": "1 Main St", "workplace_town": "Geelong", "workplace_postcode": "3220" }
+```
+```json
+// Response (201)
+{ "message": "Workplace created successfully",
+  "workplace": { "_id": "...", "workplace_name": "Corner Cafe", "invite_code": "XJ4K9P", "manager_id": "...", "active": true, "createdAt": "...", "updatedAt": "..." } }
+```
+
+**GET /mine** 🔒 Manager — the signed-in manager's own workplace, or `{ "workplace": null }` if they haven't created one yet.
+
+**Not yet implemented** (return a placeholder `501`): `GET /`, `GET /:id`, `PUT /:id`, `POST /join`, `POST /:id/invite-code`.
+
+### Shifts (`/api/shifts`)
+
+**GET /** — open shifts, populated with who posted them.
+Query params: `workplace`, `status` (defaults to `open`), `claimed_by`.
+```json
+// Response (200)
+[{ "_id": "...", "posted_by": { "_id": "...", "first_name": "Sarah", "last_name": "Jones" },
+   "claimed_by": null, "shift_date": "2026-09-20T00:00:00.000Z", "start_time": "09:00",
+   "end_time": "17:00", "shift_role": "Barista", "note": "Doctor's appointment", "status": "open" }]
+```
+
+**POST /** 🔒 — posts one of the caller's own shifts for cover. Only `shift_date`, `start_time`, `end_time`, `shift_role`, `note` are accepted — `workplace` and `posted_by` are resolved server-side from the token, not the request body.
+
+**PUT /withdraw** 🔒 — withdraws a *claim* the caller made on a shift (not a shift they originally posted — see note below). `shiftId` is passed as a query string, e.g. `PUT /api/shifts/withdraw?shiftId=...`. Resets the shift to `claimed_by: null, status: "open"`. Returns `404` if it isn't a pending claim of yours.
+
+**GET /claims** 🔒 Manager — pending claims awaiting the manager's decision, scoped to their own workplace.
+```json
+// Response (200)
+{ "claims": [{ "_id": "...", "posted_by": { "first_name": "...", "last_name": "...", "email": "..." },
+    "claimed_by": { "first_name": "...", "last_name": "...", "email": "..." }, "status": "pending" }] }
+```
+
+**POST /:id/claim** 🔒 — claims an open shift. Fails with `404` if it's no longer open (handles two employees racing for the same shift). Returns `{ "shift": {...} }` with `status` now `"pending"`.
+
+**PUT /:id/claim** 🔒 Manager — approves or rejects a pending claim.
+```json
+// Request
+{ "action": "approve" }  // or "reject"
+```
+Approve sets `status: "covered"`; reject reopens it (`status: "open"`, `claimed_by: null`). Returns `{ "shift": {...} }`.
+
+**Not yet implemented**: `GET /:id`, `PUT /:id`, and `POST /:id/withdraw` — this last one is the actual "withdraw a shift you posted" feature (FR-23); it isn't built yet, so don't confuse it with `PUT /withdraw` above, which withdraws a claim instead.
+
+### Employee approvals (`/api/manager`)
+
+**GET /pending-employees** 🔒 Manager — employees awaiting approval into the manager's own workplace.
+```json
+// Response (200)
+{ "success": true, "count": 1,
+  "employees": [{ "_id": "...", "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "role": "employee", "workplace_status": "pending" }] }
+```
+
+**PATCH /process-employee/:id** 🔒 Manager
+```json
+// Request
+{ "action": "approve" }  // or "reject"
+```
+Approve sets the employee's `workplace_status` to `"approved"`. Reject sets it to `"rejected"` and `active: false` (soft-disabled, not deleted). Returns `{ "success": true, "message": "Employee request successfully approved.", "employeeName": "Sarah Jones", "action": "approve" }`.
+
+### Users (`/api/users`)
+
+**Not yet implemented** (all return a placeholder `501`): `GET /:id`, `PUT /:id`, `PUT /:id/password`, `PUT /:id/status`.
+
+### Real-time chat
+
+Workplace chat runs over Socket.io (`sockets/chat.socket.js`), not REST — not covered by this reference.
+
 ## Technology
 
 - Node.js 20.19 or newer
