@@ -206,8 +206,9 @@ those marked 🔒 Manager also require the signed-in user's role to be
 
 ### Shifts (`/api/shifts`)
 
-**GET /** — open shifts, populated with who posted them.
-Query params: `workplace`, `status` (defaults to `open`), `claimed_by`.
+**GET /** 🔒 — shifts belonging to the caller's own workplace, populated with who posted them. The workplace is always resolved from the authenticated user server-side — a `workplace` query parameter is **not** read from the request, so it can't be used to view another workplace's shifts. Returns `[]` if the caller has no active workplace.
+
+Query parameters: `status` (defaults to `open`), `claimed_by` — optional.
 ```json
 // Response (200)
 [{ "_id": "...", "posted_by": { "_id": "...", "first_name": "Sarah", "last_name": "Jones" },
@@ -237,13 +238,26 @@ Approve sets `status: "covered"`; reject reopens it (`status: "open"`, `claimed_
 
 **Not yet implemented**: `GET /:id`, `PUT /:id`, and `POST /:id/withdraw` — this last one is the actual "withdraw a shift you posted" feature (FR-23); it isn't built yet, so don't confuse it with `PUT /withdraw` above, which withdraws a claim instead.
 
-### Employee approvals (`/api/manager`)
+### Manager (`/api/manager`)
 
 **GET /pending-employees** 🔒 Manager — employees awaiting approval into the manager's own workplace.
 ```json
 // Response (200)
 { "success": true, "count": 1,
   "employees": [{ "_id": "...", "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "role": "employee", "workplace_status": "pending" }] }
+```
+
+**GET /employees** 🔒 Manager — all active employees (approved or pending) in the manager's own workplace.
+```json
+// Response (200)
+{ "success": true, "count": 1,
+  "employees": [{ "_id": "...", "first_name": "Sarah", "last_name": "Jones", "email": "sarah@test.com", "workplace_status": "approved" }] }
+```
+
+**GET /shifts** 🔒 Manager — all shifts belonging to the manager's own workplace, with no status filter applied.
+```json
+// Response (200)
+{ "success": true, "count": 1, "shifts": [{ "_id": "...", "status": "covered", "shift_role": "Barista" }] }
 ```
 
 **PATCH /process-employee/:id** 🔒 Manager
