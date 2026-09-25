@@ -169,6 +169,7 @@ stage('Monitoring') {
         echo 'Production monitoring and health check passed.'
     }
 }
+}
 
     post {
         success {
