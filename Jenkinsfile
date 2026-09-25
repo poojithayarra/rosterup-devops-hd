@@ -75,73 +75,100 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
-            steps {
-                echo '===== DEPLOY STAGE ====='
+       stage('Deploy') {
+    steps {
+        echo '===== DEPLOY STAGE ====='
 
-                echo 'Removing previous staging container if it exists...'
-                sh '''
-                    docker rm -f ${STAGING_CONTAINER} || true
-                '''
+        echo 'Removing previous staging container...'
+        sh '''
+            docker rm -f rosterup-staging || true
+        '''
 
-                echo 'Deploying RosterUp to staging...'
-                sh '''
-                    docker run -d \
-                      --name ${STAGING_CONTAINER} \
-                      -p 3001:3000 \
-                      ${IMAGE_NAME}:${IMAGE_TAG}
-                '''
-
-                echo 'Waiting for staging application...'
-                sleep 10
-
-                echo 'Checking staging container...'
-                sh 'docker ps --filter "name=${STAGING_CONTAINER}"'
-            }
+        echo 'Deploying RosterUp to staging...'
+        withCredentials([string(credentialsId: 'rosterup-jwt-secret', variable: 'JWT_SECRET_VALUE')]) {
+            sh '''
+                docker run -d \
+                  --name rosterup-staging \
+                  -p 3001:3000 \
+                  -e MONGO_URI=mongodb://host.docker.internal:27017/RUDatabase \
+                  -e JWT_SECRET="$JWT_SECRET_VALUE" \
+                  -e PORT=3000 \
+                  ${IMAGE_NAME}:${IMAGE_TAG}
+            '''
         }
 
-        stage('Release') {
-            steps {
-                echo '===== RELEASE STAGE ====='
+        echo 'Waiting for staging application...'
+        sleep 15
 
-                echo 'Removing previous production container if it exists...'
-                sh '''
-                    docker rm -f ${PRODUCTION_CONTAINER} || true
-                '''
+        echo 'Checking staging container...'
+        sh '''
+            docker ps --filter "name=rosterup-staging" --format "{{.Names}} {{.Status}}"
+        '''
 
-                echo 'Releasing RosterUp to production...'
-                sh '''
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:production
-                '''
-
-                sh '''
-                    docker run -d \
-                      --name ${PRODUCTION_CONTAINER} \
-                      -p 3000:3000 \
-                      ${IMAGE_NAME}:production
-                '''
-
-                echo 'Production release completed.'
-            }
-        }
-
-        stage('Monitoring') {
-            steps {
-                echo '===== MONITORING STAGE ====='
-
-                echo 'Checking production container status...'
-                sh 'docker ps --filter "name=${PRODUCTION_CONTAINER}"'
-
-                echo 'Checking application health...'
-                sh '''
-                    curl -f http://localhost:3000 || \
-                    (echo "Production health check failed" && exit 1)
-                '''
-
-                echo 'Production monitoring/health check passed.'
-            }
-        }
+        echo 'Checking staging application health...'
+        sh '''
+            docker inspect -f "{{.State.Running}}" rosterup-staging | grep true
+        '''
     }
+}
+
+stage('Release') {
+    steps {
+        echo '===== RELEASE STAGE ====='
+
+        echo 'Removing previous production container...'
+        sh '''
+            docker rm -f rosterup-production || true
+        '''
+
+        echo 'Creating production image tag...'
+        sh '''
+            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:production
+        '''
+
+        echo 'Releasing RosterUp to production...'
+        withCredentials([string(credentialsId: 'rosterup-jwt-secret', variable: 'JWT_SECRET_VALUE')]) {
+            sh '''
+                docker run -d \
+                  --name rosterup-production \
+                  -p 3002:3000 \
+                  -e MONGO_URI=mongodb://host.docker.internal:27017/RUDatabase \
+                  -e JWT_SECRET="$JWT_SECRET_VALUE" \
+                  -e PORT=3000 \
+                  ${IMAGE_NAME}:production
+            '''
+        }
+
+        echo 'Waiting for production application...'
+        sleep 15
+
+        echo 'Checking production container...'
+        sh '''
+            docker ps --filter "name=rosterup-production" --format "{{.Names}} {{.Status}}"
+        '''
+
+        echo 'Production release verified.'
+    }
+}
+
+stage('Monitoring') {
+    steps {
+        echo '===== MONITORING STAGE ====='
+
+        echo 'Checking production container status...'
+        sh '''
+            docker inspect -f "{{.State.Running}}" rosterup-production | grep true
+        '''
+
+        echo 'Checking production application...'
+        sh '''
+            curl -f http://host.docker.internal:3002 || \
+            (echo "Production health check failed" && exit 1)
+        '''
+
+        echo 'Production monitoring and health check passed.'
+    }
+}
 
     post {
         success {
