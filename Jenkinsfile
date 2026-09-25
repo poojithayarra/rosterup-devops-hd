@@ -38,23 +38,25 @@ pipeline {
             }
         }
 
-        stage('Code Quality') {
-            steps {
-                echo '===== CODE QUALITY STAGE ====='
+     stage('Code Quality') {
+    steps {
+        echo '===== CODE QUALITY STAGE ====='
 
-                echo 'Running SonarQube analysis...'
+        echo 'Running SonarQube analysis...'
 
-                withSonarQubeEnv('SonarQube') {
-                    sh '''
-                        sonar-scanner \
-                          -Dsonar.projectKey=rosterup-devops \
-                          -Dsonar.projectName=RosterUp-DevOps \
-                          -Dsonar.sources=. \
-                          -Dsonar.exclusions=node_modules/**,coverage/**,test/**
-                    '''
-                }
+        withSonarQubeEnv('SonarQube') {
+            withEnv(["PATH+SONAR=${tool 'SonarScanner'}/bin"]) {
+                sh '''
+                    sonar-scanner \
+                      -Dsonar.projectKey=rosterup-devops \
+                      -Dsonar.projectName=RosterUp-DevOps \
+                      -Dsonar.sources=. \
+                      -Dsonar.exclusions=node_modules/**,coverage/**,test/**
+                '''
             }
         }
+    }
+}
 
         stage('Security') {
             steps {
